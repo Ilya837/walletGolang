@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"log"
 )
 
 type message struct {
@@ -14,8 +16,8 @@ type message struct {
 }
 
 type DataStorage interface {
-	Get(uuid string) (int64, error)
-	Check(uuid string) bool
+	Get(uuid string) (float32, error)
+	Check(uuid string) (bool, error)
 	ChangeBalance(sum float32, uuid string) error
 }
 
@@ -28,12 +30,13 @@ func createGetBalanceHandler(ds DataStorage) http.HandlerFunc {
 		if r.Method == http.MethodGet {
 			parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/") //разделяем адрес на части
 
-			if len(parts) != 4 || r.URL.Path != "//api/v1/wallets/"+parts[3]+"/" { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
+			if len(parts) != 4 || r.URL.Path != "/api/v1/wallets/"+parts[3] { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
+				log.Print("wrong path: " + r.URL.Path)
 				http.NotFound(w, r)
 				return
 			}
 
-			uuid := parts[1]
+			uuid := parts[3]
 
 			sum, err := ds.Get(uuid)
 
@@ -55,7 +58,7 @@ func createChangeBalanceHandler(ds DataStorage) http.HandlerFunc {
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		} else {
 
-			if r.URL.Path != "//api/v1/wallets/wallet/" { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
+			if r.URL.Path != "/api/v1/wallets/wallet" { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
 				http.NotFound(w, r)
 				return
 			}
@@ -72,23 +75,40 @@ func createChangeBalanceHandler(ds DataStorage) http.HandlerFunc {
 				return
 			}
 
-			if !ds.Check(msg.walletId) {
+			check, err := ds.Check(msg.walletId)
+
+			if err != nil {
+				fmt.Fprintln(w, err)
+				return
+			}
+
+			if !check {
 				fmt.Fprintln(w, "UUID is wrong")
 				return
 			}
 
 			switch msg.operationType {
 			case "DEPOSIT":
-				ds.ChangeBalance(msg.amount, msg.walletId)
+				err = ds.ChangeBalance(msg.amount, msg.walletId)
 			case "WITHDRAW":
-				ds.ChangeBalance(-msg.amount, msg.walletId)
+				err = ds.ChangeBalance(-msg.amount, msg.walletId)
+			}
+
+			if err != nil {
+				fmt.Fprintln(w, err)
+				return
+			} else {
+				fmt.Fprintln(w, "All good")
+				return
 			}
 
 		}
 	}
 }
 
-func (server Server) Start() {
+func (server *Server) Start(ds DataStorage) {
+
+	server.storage = ds
 
 	http.HandleFunc("/api/v1/wallets/", createGetBalanceHandler(server.storage))
 
