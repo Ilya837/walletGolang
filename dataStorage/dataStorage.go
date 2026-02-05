@@ -100,7 +100,7 @@ func (postgres Postgres) Check(uuid string) (bool, error) {
 func (postgres Postgres) ChangeBalance(sum float64, uuid string) (bool, error) {
 
 	cmdTag, err := postgres.pool.Exec(context.Background(),
-		"UPDATE wallets SET balance = balance + $1 WHERE id = $2",
+		"UPDATE wallets SET balance = TRUNC( (balance + $1)::NUMERIC , 2) WHERE id = $2",
 		sum, uuid)
 
 	if err != nil {

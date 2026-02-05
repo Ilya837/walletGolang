@@ -18,7 +18,7 @@ func startServer() {
 		return
 	}
 
-	host := "localhost"
+	host := os.Getenv("POSTGRES_HOST")
 	dbPort := "5432"
 	user := os.Getenv("POSTGRES_USER")
 	password := os.Getenv("POSTGRES_PASSWORD")

@@ -32,6 +32,16 @@ services:
       -database=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       up 
 
+  server:
+    build: .
+    ports:
+      - "80:80"
+    environment:
+      POSTGRES_HOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+        
 volumes:
   pgdata:
     driver: local

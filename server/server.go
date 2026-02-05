@@ -59,7 +59,7 @@ func newGetBalanceHandler(ds WalletStorage) http.HandlerFunc {
 			}
 
 			log.Println("Operation is done")
-			fmt.Fprintln(w, sum)
+			fmt.Fprintln(w, math.Floor(sum*100)/100)
 
 		} else {
 			log.Println("wrong method on path:", r.URL.Path)
