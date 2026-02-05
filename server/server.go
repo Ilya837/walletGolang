@@ -3,16 +3,18 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"log"
 )
 
-type message struct {
+type UpdateWalletmessage struct {
 	WalletId      string  `json:"walletId"`
 	OperationType string  `json:"operationType"`
-	Amount        float32 `json:"amount"`
+	Amount        float64 `json:"amount"`
 }
 
 type createWalletmessage struct {
@@ -20,9 +22,9 @@ type createWalletmessage struct {
 }
 
 type WalletStorage interface {
-	Get(uuid string) (float32, error)
+	Get(uuid string) (float64, error)
 	Check(uuid string) (bool, error)
-	ChangeBalance(sum float32, uuid string) error
+	ChangeBalance(sum float64, uuid string) (bool, error)
 	CreateWallet(uuid string) error
 }
 
@@ -80,7 +82,7 @@ func newChangeBalanceHandler(ds WalletStorage) http.HandlerFunc {
 				return
 			}
 
-			var msg message
+			var msg UpdateWalletmessage
 			err := json.NewDecoder(r.Body).Decode(&msg)
 			if err != nil {
 				log.Println("wrong json")
@@ -89,7 +91,7 @@ func newChangeBalanceHandler(ds WalletStorage) http.HandlerFunc {
 			}
 
 			if msg.Amount <= 0 {
-				log.Println("wrong json among:", msg.Amount)
+				log.Println("wrong json amount:", msg.Amount)
 				http.Error(w, "sum must be more 0", http.StatusBadRequest)
 				return
 			}
@@ -97,7 +99,7 @@ func newChangeBalanceHandler(ds WalletStorage) http.HandlerFunc {
 			check, err := ds.Check(msg.WalletId)
 
 			if err != nil {
-				log.Println("wrong serwer bihaviour")
+				log.Println("wrong server behaviour")
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -108,24 +110,35 @@ func newChangeBalanceHandler(ds WalletStorage) http.HandlerFunc {
 				return
 			}
 
+			msg.Amount = math.Floor(msg.Amount*100) / 100
+
+			changed := false
+
 			switch msg.OperationType {
 			case "DEPOSIT":
-				err = ds.ChangeBalance(msg.Amount, msg.WalletId)
+				changed, err = ds.ChangeBalance(msg.Amount, msg.WalletId)
 			case "WITHDRAW":
-				err = ds.ChangeBalance(-msg.Amount, msg.WalletId)
+				changed, err = ds.ChangeBalance(-msg.Amount, msg.WalletId)
 			default:
 				log.Println("wrong operation type")
 				http.Error(w, err.Error(), http.StatusBadRequest)
 			}
 
 			if err != nil {
-				log.Println("wrong serwer bihaviour")
+				log.Println("wrong server behaviour")
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			} else {
-				log.Println("Operation complit")
-				fmt.Fprintln(w, "Operation complit")
-				return
+
+				if !changed {
+					log.Println("balance small for Withdraw")
+					http.Error(w, "balance small for Withdraw", http.StatusBadRequest)
+				} else {
+					log.Println("Operation complit")
+					fmt.Fprintln(w, "Operation complit")
+					return
+				}
+
 			}
 
 		}
@@ -188,18 +201,38 @@ func newCreateWalletHandler(ds WalletStorage) http.HandlerFunc {
 	}
 }
 
-func (server *Server) Start(ds WalletStorage) {
+var dbSem = make(chan struct{}, 50)
+
+func withDBLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dbSem <- struct{}{}
+		defer func() { <-dbSem }()
+		next(w, r)
+	}
+}
+
+func (server *Server) Start(ds WalletStorage, port string) {
 
 	server.storage = ds
 
-	http.HandleFunc("/api/v1/wallets/", newGetBalanceHandler(server.storage))
+	mux := http.NewServeMux()
 
-	http.HandleFunc("/api/v1/wallets/wallet/create", newCreateWalletHandler(server.storage))
+	mux.HandleFunc("/api/v1/wallets/", withDBLimit(newGetBalanceHandler(server.storage)))
 
-	http.HandleFunc("/api/v1/wallets/wallet", newChangeBalanceHandler(server.storage))
+	mux.HandleFunc("/api/v1/wallets/wallet/create", withDBLimit(newCreateWalletHandler(server.storage)))
 
-	fmt.Println("Starting server at port 80")
-	err := http.ListenAndServe(":80", nil)
+	mux.HandleFunc("/api/v1/wallets/wallet", withDBLimit(newChangeBalanceHandler(server.storage)))
+
+	srv := &http.Server{
+		Addr:         port,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	fmt.Println("Starting server at port", port)
+	err := srv.ListenAndServe()
 	if err != nil {
 		fmt.Println("Error starting the server:", err)
 	}

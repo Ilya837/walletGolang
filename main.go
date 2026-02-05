@@ -10,7 +10,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-func main() {
+func startServer() {
 	err := godotenv.Load("config.env")
 
 	if err != nil {
@@ -19,12 +19,12 @@ func main() {
 	}
 
 	host := "localhost"
-	port := "5432"
+	dbPort := "5432"
 	user := os.Getenv("POSTGRES_USER")
 	password := os.Getenv("POSTGRES_PASSWORD")
-	dbname := os.Getenv("POSTGRES_DB")
+	dbName := os.Getenv("POSTGRES_DB")
 
-	db, err := datastorage.NewPostgres(host, port, user, password, dbname)
+	db, err := datastorage.NewPostgres(host, dbPort, user, password, dbName)
 
 	if err != nil {
 		log.Fatal(err)
@@ -33,6 +33,11 @@ func main() {
 
 	server := server.Server{}
 
-	server.Start(db)
+	servePort := os.Getenv("SERVER_PORT")
 
+	server.Start(db, servePort)
+}
+
+func main() {
+	startServer()
 }

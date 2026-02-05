@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -32,9 +33,9 @@ func (_ DBError) Error() string {
 }
 
 type WalletStorage interface {
-	Get(uuid string) (float32, error)
+	Get(uuid string) (float64, error)
 	Check(uuid string) (bool, error)
-	ChangeBalance(sum float32, uuid string) error
+	ChangeBalance(sum float64, uuid string) (bool, error)
 	CreateWallet(uuid string) error
 }
 
@@ -42,9 +43,9 @@ type Postgres struct {
 	pool *pgxpool.Pool
 }
 
-func NewPostgres(host, port, user, password, dbname string) (Postgres, error) {
+func NewPostgres(host, port, user, password, dbName string) (Postgres, error) {
 	psqlconn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
+		host, port, user, password, dbName)
 
 	pool, err := pgxpool.New(context.Background(), psqlconn)
 
@@ -55,8 +56,8 @@ func NewPostgres(host, port, user, password, dbname string) (Postgres, error) {
 	return Postgres{pool: pool}, nil
 }
 
-func (postgres Postgres) Get(uuid string) (float32, error) {
-	var balance float32
+func (postgres Postgres) Get(uuid string) (float64, error) {
+	var balance float64
 	err := postgres.pool.QueryRow(context.Background(),
 		"select balance from public.wallets where id=$1;",
 		uuid).Scan(&balance)
@@ -77,7 +78,7 @@ func (postgres Postgres) Get(uuid string) (float32, error) {
 
 func (postgres Postgres) Check(uuid string) (bool, error) {
 
-	var balance float32
+	var balance float64
 	err := postgres.pool.QueryRow(context.Background(),
 		"select balance from public.wallets where id=$1;",
 		uuid).Scan(&balance)
@@ -96,23 +97,31 @@ func (postgres Postgres) Check(uuid string) (bool, error) {
 
 }
 
-func (postgres Postgres) ChangeBalance(sum float32, uuid string) error {
+func (postgres Postgres) ChangeBalance(sum float64, uuid string) (bool, error) {
 
 	cmdTag, err := postgres.pool.Exec(context.Background(),
 		"UPDATE wallets SET balance = balance + $1 WHERE id = $2",
 		sum, uuid)
 
 	if err != nil {
-		log.Println("error in ChangeBalance method: ", err)
-		return DBError{}
+
+		if err.(*pgconn.PgError).Code == "23514" {
+			log.Println("balance too small for operation ")
+			return false, nil
+
+		} else {
+			log.Println("error in ChangeBalance method: ", err)
+			log.Println("error code: ")
+			return false, DBError{}
+		}
 	}
 
 	if cmdTag.RowsAffected() == 0 {
 		log.Println("error in ChangeBalance method: ", err)
-		return UUIDUndefined{}
+		return false, UUIDUndefined{}
 	}
 
-	return nil
+	return true, nil
 }
 
 func (postgres Postgres) CreateWallet(uuid string) error {
