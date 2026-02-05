@@ -9,20 +9,6 @@ import (
 	"log"
 )
 
-type UUIDUndefined struct {
-}
-
-func (_ UUIDUndefined) Error() string {
-	return "UUID undifined"
-}
-
-type UUIDExists struct {
-}
-
-func (_ UUIDExists) Error() string {
-	return "UUID already exists"
-}
-
 type message struct {
 	WalletId      string  `json:"walletId"`
 	OperationType string  `json:"operationType"`
@@ -67,6 +53,7 @@ func newGetBalanceHandler(ds WalletStorage) http.HandlerFunc {
 			if err != nil {
 				log.Println("error get request:", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
 
 			log.Println("Operation is done")
@@ -86,6 +73,7 @@ func newChangeBalanceHandler(ds WalletStorage) http.HandlerFunc {
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		} else {
 
+			log.Println("change request'", r.URL.Path, "'")
 			if r.URL.Path != "/api/v1/wallets/wallet" { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
 				log.Println("wrong path:", r.URL.Path)
 				http.NotFound(w, r)
@@ -150,14 +138,18 @@ func newCreateWalletHandler(ds WalletStorage) http.HandlerFunc {
 			log.Println("wrong method on path:", r.URL.Path)
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		} else {
+
 			log.Println("create wallet start")
+
 			if r.URL.Path != "/api/v1/wallets/wallet/create" { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
 				http.NotFound(w, r)
 				return
 			}
 
 			var msg createWalletmessage
+
 			err := json.NewDecoder(r.Body).Decode(&msg)
+
 			if err != nil {
 				log.Println("wrong json")
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -165,19 +157,27 @@ func newCreateWalletHandler(ds WalletStorage) http.HandlerFunc {
 			}
 
 			log.Println("uuid:", msg.WalletId)
+			check, err := ds.Check(msg.WalletId)
+
+			if err != nil {
+				log.Println("error in check method")
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			if check {
+				log.Println("UUID is actually exist:", msg.WalletId)
+				http.Error(w, "UUID is actually exist", http.StatusBadRequest)
+				return
+			}
+
 			err = ds.CreateWallet(msg.WalletId)
 
 			if err != nil {
+				log.Println("error in create method: ", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 
-				if err.Error() == (UUIDExists{}).Error() {
-					log.Println("uuid is already exist")
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				} else {
-					log.Println("wrong serwer bihaviour")
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
 			} else {
 				log.Println("Wallet created")
 				fmt.Fprintln(w, "Wallet created")

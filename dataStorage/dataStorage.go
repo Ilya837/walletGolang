@@ -1,13 +1,35 @@
-package datastorage
+package poolstorage
 
 import (
-	"database/sql"
+	"context"
 	"errors"
 	"fmt"
-	"walletGolang/server"
+	"log"
 
-	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+type UUIDUndefined struct {
+}
+
+func (_ UUIDUndefined) Error() string {
+	return "UUID undifined"
+}
+
+type UUIDExists struct {
+}
+
+func (_ UUIDExists) Error() string {
+	return "UUID already exists"
+}
+
+type DBError struct {
+}
+
+func (_ DBError) Error() string {
+	return "DB error"
+}
 
 type WalletStorage interface {
 	Get(uuid string) (float32, error)
@@ -17,147 +39,92 @@ type WalletStorage interface {
 }
 
 type Postgres struct {
-	data *sql.DB
+	pool *pgxpool.Pool
 }
 
 func NewPostgres(host, port, user, password, dbname string) (Postgres, error) {
 	psqlconn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		host, port, user, password, dbname)
 
-	db, err := sql.Open("postgres", psqlconn)
+	pool, err := pgxpool.New(context.Background(), psqlconn)
 
 	if err != nil {
-		return Postgres{}, err
+		return Postgres{}, errors.New("database not created")
 	}
 
-	if err := db.Ping(); err != nil {
-		return Postgres{}, err
-	}
-
-	return Postgres{data: db}, nil
+	return Postgres{pool: pool}, nil
 }
 
 func (postgres Postgres) Get(uuid string) (float32, error) {
-	err := postgres.data.Ping()
+	var balance float32
+	err := postgres.pool.QueryRow(context.Background(),
+		"select balance from public.wallets where id=$1;",
+		uuid).Scan(&balance)
 
-	if err != nil {
-		return 0, err
-	}
+	if err == pgx.ErrNoRows {
+		log.Println("error in Get method: ", err)
+		return 0, UUIDUndefined{}
+	} else {
 
-	rows, err := postgres.data.Query("select balance from public.wallets where id=$1", uuid)
-
-	if err != nil {
-		return 0, err
-	}
-
-	defer rows.Close()
-
-	if rows.Next() {
-		var balance float32
-		err = rows.Scan(&balance)
 		if err != nil {
-			return 0, err
+			log.Println("error in Get method: ", err)
+			return 0, DBError{}
 		}
 
 		return balance, nil
-
-	} else {
-		return 0, server.UUIDUndefined{}
 	}
 }
 
 func (postgres Postgres) Check(uuid string) (bool, error) {
 
-	err := postgres.data.Ping()
+	var balance float32
+	err := postgres.pool.QueryRow(context.Background(),
+		"select balance from public.wallets where id=$1;",
+		uuid).Scan(&balance)
 
-	if err != nil {
-		return false, err
-	}
-
-	rows, err := postgres.data.Query("select * from public.wallets where id=$1", uuid)
-
-	if err != nil {
-		return false, err
-	}
-
-	defer rows.Close()
-
-	if rows.Next() {
-		return true, nil
-	} else {
+	if err == pgx.ErrNoRows {
 		return false, nil
+	} else {
+
+		if err != nil {
+			log.Println("error in Check method: ", err)
+			return false, DBError{}
+		}
+
+		return true, nil
 	}
 
 }
 
 func (postgres Postgres) ChangeBalance(sum float32, uuid string) error {
-	err := postgres.data.Ping()
+
+	cmdTag, err := postgres.pool.Exec(context.Background(),
+		"UPDATE wallets SET balance = balance + $1 WHERE id = $2",
+		sum, uuid)
 
 	if err != nil {
-		return err
+		log.Println("error in ChangeBalance method: ", err)
+		return DBError{}
 	}
 
-	tx, err := postgres.data.Begin()
-
-	defer tx.Rollback()
-
-	exsist, err := postgres.Check(uuid)
-
-	if !exsist {
-		return server.UUIDUndefined{}
-	}
-
-	result, err := postgres.data.Exec("UPDATE wallets SET balance = balance + $1 WHERE id = $2", sum, uuid)
-
-	if err != nil {
-		return err
-	}
-
-	rows, err := result.RowsAffected()
-
-	if err != nil {
-		return err
-	}
-
-	if rows != 1 {
-		return errors.New("not enough balance")
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
+	if cmdTag.RowsAffected() == 0 {
+		log.Println("error in ChangeBalance method: ", err)
+		return UUIDUndefined{}
 	}
 
 	return nil
 }
 
 func (postgres Postgres) CreateWallet(uuid string) error {
-	err := postgres.data.Ping()
+
+	_, err := postgres.pool.Exec(context.Background(),
+		"INSERT INTO wallets (id, balance) VALUES ($1,0)", uuid)
 
 	if err != nil {
-		return err
+		log.Println("error in CreateWallet method: ", err)
+		return DBError{}
 	}
 
-	exsist, err := postgres.Check(uuid)
+	return nil
 
-	if exsist {
-		return server.UUIDExists{}
-	}
-
-	result, err := postgres.data.Exec("INSERT INTO wallets (id, balance) VALUES ($1,0)", uuid)
-
-	if err != nil {
-		return err
-	}
-
-	rows, err := result.RowsAffected()
-
-	if err != nil {
-		return err
-	}
-
-	if rows == 1 {
-		return nil
-	} else {
-		return errors.New("strange insert behavior")
-	}
 }
