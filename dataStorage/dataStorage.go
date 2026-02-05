@@ -4,14 +4,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"walletGolang/server"
 
 	_ "github.com/lib/pq"
 )
 
-type DataStorage interface {
+type WalletStorage interface {
 	Get(uuid string) (float32, error)
 	Check(uuid string) (bool, error)
 	ChangeBalance(sum float32, uuid string) error
+	CreateWallet(uuid string) error
 }
 
 type Postgres struct {
@@ -42,7 +44,7 @@ func (postgres Postgres) Get(uuid string) (float32, error) {
 		return 0, err
 	}
 
-	rows, err := postgres.data.Query("select amoung from public.wallets where id=$1", uuid)
+	rows, err := postgres.data.Query("select balance from public.wallets where id=$1", uuid)
 
 	if err != nil {
 		return 0, err
@@ -60,7 +62,7 @@ func (postgres Postgres) Get(uuid string) (float32, error) {
 		return balance, nil
 
 	} else {
-		return 0, errors.New("UUID undifined")
+		return 0, server.UUIDUndefined{}
 	}
 }
 
@@ -95,5 +97,67 @@ func (postgres Postgres) ChangeBalance(sum float32, uuid string) error {
 		return err
 	}
 
+	tx, err := postgres.data.Begin()
+
+	defer tx.Rollback()
+
+	exsist, err := postgres.Check(uuid)
+
+	if !exsist {
+		return server.UUIDUndefined{}
+	}
+
+	result, err := postgres.data.Exec("UPDATE wallets SET balance = balance + $1 WHERE id = $2", sum, uuid)
+
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+
+	if err != nil {
+		return err
+	}
+
+	if rows != 1 {
+		return errors.New("not enough balance")
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (postgres Postgres) CreateWallet(uuid string) error {
+	err := postgres.data.Ping()
+
+	if err != nil {
+		return err
+	}
+
+	exsist, err := postgres.Check(uuid)
+
+	if exsist {
+		return server.UUIDExists{}
+	}
+
+	result, err := postgres.data.Exec("INSERT INTO wallets (id, balance) VALUES ($1,0)", uuid)
+
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+
+	if err != nil {
+		return err
+	}
+
+	if rows == 1 {
+		return nil
+	} else {
+		return errors.New("strange insert behavior")
+	}
 }

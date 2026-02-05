@@ -1,4 +1,5 @@
 CREATE TABLE wallets (
-    id TEXT PRIMARY KEY,
-    amoung FLOAT NOT NULL
+    id TEXT PRIMARY KEY    CHECK (id != ''),
+    balance FLOAT NOT NULL CHECK (balance >= 0)
 );
+

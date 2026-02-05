@@ -9,25 +9,47 @@ import (
 	"log"
 )
 
-type message struct {
-	walletId      string  `json:"walletId"`
-	operationType string  `json:"operationType"`
-	amount        float32 `json:"amount"`
+type UUIDUndefined struct {
 }
 
-type DataStorage interface {
+func (_ UUIDUndefined) Error() string {
+	return "UUID undifined"
+}
+
+type UUIDExists struct {
+}
+
+func (_ UUIDExists) Error() string {
+	return "UUID already exists"
+}
+
+type message struct {
+	WalletId      string  `json:"walletId"`
+	OperationType string  `json:"operationType"`
+	Amount        float32 `json:"amount"`
+}
+
+type createWalletmessage struct {
+	WalletId string `json:"walletId"`
+}
+
+type WalletStorage interface {
 	Get(uuid string) (float32, error)
 	Check(uuid string) (bool, error)
 	ChangeBalance(sum float32, uuid string) error
+	CreateWallet(uuid string) error
 }
 
 type Server struct {
-	storage DataStorage
+	storage WalletStorage
 }
 
-func createGetBalanceHandler(ds DataStorage) http.HandlerFunc {
+func newGetBalanceHandler(ds WalletStorage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
+
+			log.Println("Get request '", r.URL.Path, "'")
+
 			parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/") //разделяем адрес на части
 
 			if len(parts) != 4 || r.URL.Path != "/api/v1/wallets/"+parts[3] { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
@@ -38,27 +60,34 @@ func createGetBalanceHandler(ds DataStorage) http.HandlerFunc {
 
 			uuid := parts[3]
 
+			log.Println("uuid:", uuid)
+
 			sum, err := ds.Get(uuid)
 
 			if err != nil {
-				fmt.Fprintln(w, err)
+				log.Println("error get request:", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
 
+			log.Println("Operation is done")
 			fmt.Fprintln(w, sum)
 
 		} else {
+			log.Println("wrong method on path:", r.URL.Path)
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		}
 	}
 }
 
-func createChangeBalanceHandler(ds DataStorage) http.HandlerFunc {
+func newChangeBalanceHandler(ds WalletStorage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
+			log.Println("wrong method on path:", r.URL.Path)
 			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		} else {
 
 			if r.URL.Path != "/api/v1/wallets/wallet" { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
+				log.Println("wrong path:", r.URL.Path)
 				http.NotFound(w, r)
 				return
 			}
@@ -66,39 +95,48 @@ func createChangeBalanceHandler(ds DataStorage) http.HandlerFunc {
 			var msg message
 			err := json.NewDecoder(r.Body).Decode(&msg)
 			if err != nil {
+				log.Println("wrong json")
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 
-			if msg.amount <= 0 {
-				fmt.Fprintln(w, "sum must be more 0")
+			if msg.Amount <= 0 {
+				log.Println("wrong json among:", msg.Amount)
+				http.Error(w, "sum must be more 0", http.StatusBadRequest)
 				return
 			}
 
-			check, err := ds.Check(msg.walletId)
+			check, err := ds.Check(msg.WalletId)
 
 			if err != nil {
-				fmt.Fprintln(w, err)
+				log.Println("wrong serwer bihaviour")
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 
 			if !check {
-				fmt.Fprintln(w, "UUID is wrong")
+				log.Println("wrong uuid:", msg.WalletId)
+				http.Error(w, "UUID is wrong", http.StatusBadRequest)
 				return
 			}
 
-			switch msg.operationType {
+			switch msg.OperationType {
 			case "DEPOSIT":
-				err = ds.ChangeBalance(msg.amount, msg.walletId)
+				err = ds.ChangeBalance(msg.Amount, msg.WalletId)
 			case "WITHDRAW":
-				err = ds.ChangeBalance(-msg.amount, msg.walletId)
+				err = ds.ChangeBalance(-msg.Amount, msg.WalletId)
+			default:
+				log.Println("wrong operation type")
+				http.Error(w, err.Error(), http.StatusBadRequest)
 			}
 
 			if err != nil {
-				fmt.Fprintln(w, err)
+				log.Println("wrong serwer bihaviour")
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			} else {
-				fmt.Fprintln(w, "All good")
+				log.Println("Operation complit")
+				fmt.Fprintln(w, "Operation complit")
 				return
 			}
 
@@ -106,13 +144,59 @@ func createChangeBalanceHandler(ds DataStorage) http.HandlerFunc {
 	}
 }
 
-func (server *Server) Start(ds DataStorage) {
+func newCreateWalletHandler(ds WalletStorage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			log.Println("wrong method on path:", r.URL.Path)
+			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		} else {
+			log.Println("create wallet start")
+			if r.URL.Path != "/api/v1/wallets/wallet/create" { // проверяем, что запрос имеет вид /api/v1/wallets/{WALLET_UUID}
+				http.NotFound(w, r)
+				return
+			}
+
+			var msg createWalletmessage
+			err := json.NewDecoder(r.Body).Decode(&msg)
+			if err != nil {
+				log.Println("wrong json")
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			log.Println("uuid:", msg.WalletId)
+			err = ds.CreateWallet(msg.WalletId)
+
+			if err != nil {
+
+				if err.Error() == (UUIDExists{}).Error() {
+					log.Println("uuid is already exist")
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				} else {
+					log.Println("wrong serwer bihaviour")
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			} else {
+				log.Println("Wallet created")
+				fmt.Fprintln(w, "Wallet created")
+				return
+			}
+
+		}
+	}
+}
+
+func (server *Server) Start(ds WalletStorage) {
 
 	server.storage = ds
 
-	http.HandleFunc("/api/v1/wallets/", createGetBalanceHandler(server.storage))
+	http.HandleFunc("/api/v1/wallets/", newGetBalanceHandler(server.storage))
 
-	http.HandleFunc("/api/v1/wallets/wallet", createChangeBalanceHandler(server.storage))
+	http.HandleFunc("/api/v1/wallets/wallet/create", newCreateWalletHandler(server.storage))
+
+	http.HandleFunc("/api/v1/wallets/wallet", newChangeBalanceHandler(server.storage))
 
 	fmt.Println("Starting server at port 80")
 	err := http.ListenAndServe(":80", nil)
