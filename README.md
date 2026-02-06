@@ -25,7 +25,7 @@ SERVER_PORT=:80
 
 ## При помощи make:
 ```
-make docker-compose-build
+make docker-compose-run
 make docker-compose-build
 ```
 ## Без make:
