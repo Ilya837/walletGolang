@@ -22,7 +22,7 @@ type createWalletmessage struct {
 }
 
 type WalletStorage interface {
-	Get(uuid string) (float64, error)
+	Get(uuid string) (bool, float64, error)
 	Check(uuid string) (bool, error)
 	ChangeBalance(sum float64, uuid string) (bool, error)
 	CreateWallet(uuid string) error
@@ -50,11 +50,17 @@ func newGetBalanceHandler(ds WalletStorage) http.HandlerFunc {
 
 			log.Println("uuid:", uuid)
 
-			sum, err := ds.Get(uuid)
+			got, sum, err := ds.Get(uuid)
 
 			if err != nil {
 				log.Println("error get request:", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			if !got {
+				log.Println("uuid undefined")
+				http.Error(w, "uuid undefined", http.StatusBadRequest)
 				return
 			}
 

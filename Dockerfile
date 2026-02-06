@@ -9,8 +9,8 @@ RUN go mod download
 
 # Копируем исходники
 COPY main.go ./
-COPY dataStorage/ ./dataStorage/
-COPY server/ ./server/
+COPY dataStorage/dataStorage.go ./dataStorage/
+COPY server/server.go ./server/
 
 
 # Собираем бинарник

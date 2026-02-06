@@ -1,4 +1,4 @@
-package poolstorage
+package datastorage
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func (_ DBError) Error() string {
 }
 
 type WalletStorage interface {
-	Get(uuid string) (float64, error)
+	Get(uuid string) (bool, float64, error)
 	Check(uuid string) (bool, error)
 	ChangeBalance(sum float64, uuid string) (bool, error)
 	CreateWallet(uuid string) error
@@ -56,23 +56,23 @@ func NewPostgres(host, port, user, password, dbName string) (Postgres, error) {
 	return Postgres{pool: pool}, nil
 }
 
-func (postgres Postgres) Get(uuid string) (float64, error) {
+func (postgres Postgres) Get(uuid string) (bool, float64, error) {
 	var balance float64
 	err := postgres.pool.QueryRow(context.Background(),
-		"select balance from public.wallets where id=$1;",
+		"select balance from wallets where id=$1;",
 		uuid).Scan(&balance)
 
 	if err == pgx.ErrNoRows {
 		log.Println("error in Get method: ", err)
-		return 0, UUIDUndefined{}
+		return false, 0, nil
 	} else {
 
 		if err != nil {
 			log.Println("error in Get method: ", err)
-			return 0, DBError{}
+			return false, 0, DBError{}
 		}
 
-		return balance, nil
+		return true, balance, nil
 	}
 }
 
@@ -80,7 +80,7 @@ func (postgres Postgres) Check(uuid string) (bool, error) {
 
 	var balance float64
 	err := postgres.pool.QueryRow(context.Background(),
-		"select balance from public.wallets where id=$1;",
+		"select balance from wallets where id=$1;",
 		uuid).Scan(&balance)
 
 	if err == pgx.ErrNoRows {
